@@ -6,237 +6,76 @@ import pandas as pd
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
-# import os
-# import pyocr
-# import getpass
-# from PIL import Image
-# import re
-# from azure.storage.blob import BlobServiceClient
-# import io
+import os
+import io
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from azure.storage.blob import BlobServiceClient
 
 
 app = func.FunctionApp()
 
-# @app.schedule(schedule="0 0 16 * * *", arg_name="myTimer", run_on_startup=True,
-#               use_monitor=False) 
-# @app.blob_output(arg_name="outputblob", path="gasconsumption/inputs_df.csv", connection="AzureWebJobsStorage")
-# def AemoActualeFlow(myTimer: func.TimerRequest, outputblob: func.Out[str]) :
+
+
+def upload_log_to_blob(function_name, log_stream):
+        try:
+            # Azure Blob Storage configurations
+            AZURE_STORAGE_CONNECTION_STRING = os.getenv("AzureWebJobsStorage")
+            BLOB_CONTAINER_NAME = f"{function_name}-log-container"  # Set the log container name
+            BLOB_LOG_FILENAME = f"logs/log.log"  # Unique filename for the log
+            
+            # Create a BlobServiceClient using the connection string
+            blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+            
+            # Get the container client (create if doesn't exist)
+            container_client = blob_service_client.get_container_client(BLOB_CONTAINER_NAME)
+            try:
+                container_client.create_container()
+            except Exception as e:
+                pass
+            
+            # Create the blob client and upload the log
+            blob_client = container_client.get_blob_client(BLOB_LOG_FILENAME)
+            log_content = log_stream.getvalue() 
+            blob_client.upload_blob(log_content, overwrite=True)
+        
+        except Exception as e:
+            logging.error(f"Failed to upload logs to Blob Storage: {str(e)}")
+
+def create_custom_logger(logger_name):
+    log_stream = io.StringIO()  
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.INFO)
+    
+    stream_handler = logging.StreamHandler(log_stream)
+    stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    if not logger.handlers:
+        logger.addHandler(stream_handler)
+    
+    return logger, log_stream
+
+
+
+def send_email(subject,body):
+    smtp_server='smtp.gmail.com'
+    port=587
+    recipients = ['aadylih@gmail.com']
+    password='dkenpftyzirukknz'
+    sender='ahmadriad19971@gmail.com'
+    msg=MIMEMultipart()
+    msg['From']= sender
+    msg['To']=','.join(recipients)
+    msg['Subject']=subject
+    msg.attach(MIMEText(body,'Plain'))
+    server=smtplib.SMTP(smtp_server,port)
+    server.starttls()
+    server.login(sender, password)
+    server.send_message(msg)
+    server.quit()
+    
    
-#     def send_email(smtp_server,port,sender,password,recipients,subject,body):
-#         msg=MIMEMultipart()
-#         msg['From']= sender
-#         msg['To']=','.join(recipients)
-#         msg['Subject']=subject
-#         msg.attach(MIMEText(body,'Plain'))
-#         server=smtplib.SMTP(smtp_server,port)
-#         server.starttls()
-#         server.login(sender, password)
-#         server.send_message(msg)
-#         server.quit()  
-            
-#     smtp_server='smtp.gmail.com'
-#     port=587
-#     recipients = ['aadylih@gmail.com']
-#     password='dkenpftyzirukknz'
-#     sender='ahmadriad19971@gmail.com'
-#     subject="Code (AemoNomsAndForecastFlow)"
-    
-
-
-
-#     if myTimer.past_due:
-#         logging.info('The timer is past due!')
-
-#     logging.info('Python timer trigger function executed.')
-
-#     try:
-
-#         class GAS:
-#             def __init__(self):
-#                 self.apiurl= "https://www.aemo.com.au/aemo/api/v1/GasBBReporting/DailyProductionAndFlow"
-#                 self.headers= { 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
-#                 self.session= Session()
-#                 self.session.headers.update(self.headers)
-#             def AllDailyProduction(self):
-#                 url=self.apiurl
-#                 r= self.session.get(url)
-#                 data= r.json()['data']
-#                 logging.error(data)
-#                 return data
-     
-    
-#         gas=GAS()
-#         d= gas.AllDailyProduction()
-
-#         Daily_production=pd.DataFrame([i.values() for i in d['DailyProductionAndFlowList']],columns= list(d['DailyProductionAndFlowList'][0]))
-#         logging.info(Daily_production)
-#         Daily_production2 = Daily_production.copy()
-
-#         Daily_production2['Location'] = Daily_production2['FacilityName'] + '-' + Daily_production2['LocationName']
-#         Daily_production2['Commodity']= 'gas'
-#         Daily_production2['Period']='daily'
-#         Daily_production2['Source']='aemo'
-#         Daily_production2['Senario']='Base'
-#         Daily_production2['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-#         Daily_production2['Type']= [['Demand','Supply','TransferIn','TransferOut']] * len(Daily_production2)
-
-#         Daily_production2 = Daily_production2.explode(['Type']) #.fillna('')
-
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'Demand', Daily_production2['Demand'], np.nan)
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'Supply', Daily_production2['Supply'], Daily_production2['Value'])
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'TransferIn', Daily_production2['TransferIn'], Daily_production2['Value'])
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'TransferOut', Daily_production2['TransferOut'], Daily_production2['Value'])
-
-#         AemoActualFlow=Daily_production2.drop(['FacilityId','FacilityName','LocationId','LocationName','Demand','Supply','TransferIn','TransferOut','HeldInStorage'],axis=1)
-#         AemoActualFlow.rename(columns={'LastUpdated':'AsOfDate','GasDate':'ValueDate'}, inplace=True)
-
-#         AemoActualFlow['SubType']=np.nan
-#         AemoActualFlow['SubSubTybe']=np.nan
-#         AemoActualFlow['Unit']=np.nan
-#         AemoActualFlow['HubType']=np.nan
-#         AemoActualFlow['FreeText']=np.nan
-#         # AemoActualFlow.to_csv(r'D:\work\Data\AemoActualFlow.csv', index=False)
-#         # connection_string = "DefaultEndpointsProtocol=https;AccountName=gasdata;AccountKey=3uSxBm73c2YLzhO6NR8JJT0yY8HfipmdyO/P3w3womgdtq32b9/OnHk8xylZ+gvE3juHgxDvILAn+AStcfMLpg==;EndpointSuffix=core.windows.net"
-#         # blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-#         # container_name = "gasconsumption"
-#         # blob_name = "inputs_df.csv"
-#         # blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-#         updated_csv_content = AemoActualFlow.to_csv()
-#         # with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-#         #     temp_file.write(updated_csv_content.encode())
-#         #     temp_file.seek(0)
-#         #     blob_client.upload_blob(temp_file, overwrite=True)
-#         outputblob.set(updated_csv_content)
-
-#         logging.info("Changes saved successfully!")
-#         logging.info(f"CSV content: {AemoActualFlow}")
-#         body= "Changes saved successfully!"
-#         # send_email(smtp_server,port,sender,password,recipients,subject,body)
-#     except Exception as e:
-#         logging.error(f"Error accessing CSV file: {e}")
-
-
-
-
-
-
-
-
-# @app.schedule(arg_name='timer2', schedule= '0 0 16 * * *',run_on_startup=True,
-#               use_monitor=False )
-# @app.blob_output(arg_name="outputblob1", path="gasconsumption/AemoNomsAndForcastFlow.csv",
-#                   connection="AzureWebJobsStorage")
-
-# def AemoNomsAndForcastFlow(timer2: func.TimerRequest, outputblob1: func.Out[str]):
-
-#     def send_email(smtp_server,port,sender,password,recipients,subject,body):
-#         msg=MIMEMultipart()
-#         msg['From']= sender
-#         msg['To']=','.join(recipients)
-#         msg['Subject']=subject
-#         msg.attach(MIMEText(body,'Plain'))
-#         server=smtplib.SMTP(smtp_server,port)
-#         server.starttls()
-#         server.login(sender, password)
-#         server.send_message(msg)
-#         server.quit()
-            
-#     smtp_server='smtp.gmail.com'
-#     port=587
-#     recipients = ['aadylih@gmail.com']
-#     password='dkenpftyzirukknz'
-#     sender='ahmadriad19971@gmail.com'
-#     subject="Error in Code (AemoNomsAndForecastFlow)"
-
-#     #%%
-    
-#     try:
-        
-
-#         class GAS:
-#             def __init__(self):
-#                 gas_date_from = datetime.today() 
-#                 gas_date_from_str = gas_date_from.strftime("%d/%m/%Y")
-
-#                 self.apiurl= f"https://www.aemo.com.au/aemo/api/v1/GasBBReporting/NominationsAndForecasts"
-#                 self.headers= { 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
-#                 self.session= Session()
-#                 self.session.headers.update(self.headers)
-
-#             def AllDailyProduction(self):
-#         #     url=self.apiurl
-#         #     r= self.session.get(url)
-#         #     data= r.json()['data']
-#         #     return data
-#         # def LastMonthProduction(self):
-#                 gas_date_from = datetime.today()
-#                 gas_date_to = gas_date_from + timedelta(days=30)
-#                 gas_date_from_str = gas_date_from.strftime("%Y/%m/%d")
-#                 gas_date_to_str = gas_date_to.strftime("%Y/%m/%d")
-#                 url=self.apiurl+f'?FromGasDate={gas_date_from_str}&ToGasDate={gas_date_to_str}'
-#                 r= self.session.get(url) 
-#                 data= r.json()['data']
-#                 return data
-    
-#         gas=GAS()
-#         d= gas.AllDailyProduction()
-
-#         Daily_production=pd.DataFrame([i.values() for i in d['NominationsAndForecastsList']],columns= list(d['NominationsAndForecastsList'][0]))
-
-#     except Exception as e:
-        
-#         raise Exception(send_email(smtp_server, port, sender, password, recipients,subject, str(e)))
-
-#     #%%
-#     try:
-#         Daily_production2 = Daily_production.copy()
-
-#         Daily_production2['Location'] = Daily_production2['FacilityName'] + '-' + Daily_production2['LocationName']
-#         Daily_production2['Commodity']= 'gas'
-#         Daily_production2['Period']='daily'
-#         Daily_production2['Source']='aemo'
-#         Daily_production2['Senario']='Base'
-#         Daily_production2['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-#         Daily_production2['Type']= [['Demand','Supply','TransferIn','TransferOut']] * len(Daily_production2)
-
-
-#         Daily_production2 = Daily_production2.explode(['Type']) #.fillna('')
-
-
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'Demand', Daily_production2['Demand'], np.nan)
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'Supply', Daily_production2['Supply'], Daily_production2['Value'])
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'TransferIn', Daily_production2['TransferIn'], Daily_production2['Value'])
-#         Daily_production2['Value'] = np.where(Daily_production2['Type'] == 'TransferOut', Daily_production2['TransferOut'], Daily_production2['Value'])
-
-
-#         AemoActualFlow=Daily_production2.drop(['FacilityId','FacilityName','LocationId','LocationName','Demand','Supply','TransferIn','TransferOut'],axis=1)
-#         AemoActualFlow.rename(columns={'LastUpdated':'AsOfDate','GasDate':'ValueDate'}, inplace=True)
-
-
-
-#         AemoActualFlow['SubType']=np.nan
-#         AemoActualFlow['SubSubTybe']=np.nan
-#         AemoActualFlow['Unit']=np.nan
-#         AemoActualFlow['HubType']=np.nan
-#         AemoActualFlow['FreeText']=np.nan
-
-#         updated_csv_content = AemoActualFlow.to_csv()
-
-#         outputblob1.set(updated_csv_content)
-
-#         # AemoActualFlow.to_csv(r'D:\work\Data\AemoNomsAndForecastedFlow.csv', index=False)
-#         logging.info("AemoNomsAndForecastedFlow saved successfully!")
-
-#     except Exception as e:
-        
-#         raise Exception(send_email(smtp_server, port, sender, password, recipients,subject, str(e)))
-        
-
 
 
 
@@ -244,7 +83,6 @@ app = func.FunctionApp()
               use_monitor=False)
 @app.blob_output(arg_name="outputblob2", path="gasconsumption/KHNPAvialability.csv",
                   connection="AzureWebJobsStorage")
-
 def KHNPAvialability(timer3: func.TimerRequest, outputblob2: func.Out[str]):
 
     def send_email(smtp_server,port,sender,password,recipients,subject,body):
@@ -380,34 +218,34 @@ def KHNPAvialability(timer3: func.TimerRequest, outputblob2: func.Out[str]):
 
 
 
-@app.schedule(schedule="0 0 16 * 1", arg_name="myTimer", run_on_startup=True,
+
+
+@app.schedule(schedule="0 0 10 * *", arg_name="myTimer", run_on_startup=True,
               use_monitor=False) 
 @app.blob_output(arg_name="outputblob", path="gasconsumption/inputs_df.csv", connection="AzureWebJobsStorage")
 def EIAWeeklyReport(myTimer: func.TimerRequest, outputblob: func.Out[str]) :
-        
-    # Initialize an empty DataFrame
+    logger, log_stream = create_custom_logger('eia_weekly_logger')
+
     df = pd.DataFrame()
 
-    # Set up the session and headers
-    url = "https://ir.eia.gov/ngs/ngs.html"
-    headers = {
-        "Age": "20",
-        "Cache-Control": "public, max-age=30",
-        "Date": "Tue, 23 Jul 2024 11:30:02 GMT",
-        "Via": "1.1 16f38d6df135d34d67fe44df60d91ab4.cloudfront.net (CloudFront)",
-        "X-Amz-Cf-Id": "qQVBzdm5Jed8YQ_fOKtHolyveGuPEZ15M5igonZ-p672w1vYV-Oe3A==",
-        "X-Amz-Cf-Pop": "LHR61-P1",
-        "X-Cache": "Hit from cloudfront"
-    }
-    session = Session()
-    session.headers.update(headers)
-    r = session.get(url)
-
     try:
+        url = "https://ir.eia.gov/ngs/ngs.html"
+        headers = {
+            "Age": "20",
+            "Cache-Control": "public, max-age=30",
+            "Date": "Tue, 23 Jul 2024 11:30:02 GMT",
+            "Via": "1.1 16f38d6df135d34d67fe44df60d91ab4.cloudfront.net (CloudFront)",
+            "X-Amz-Cf-Id": "qQVBzdm5Jed8YQ_fOKtHolyveGuPEZ15M5igonZ-p672w1vYV-Oe3A==",
+            "X-Amz-Cf-Pop": "LHR61-P1",
+            "X-Cache": "Hit from cloudfront"
+        }
+        session = Session()
+        session.headers.update(headers)
+        r = session.get(url)
         res = r.content
         soup = BeautifulSoup(res, "html.parser")
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
 
     try:
         table = soup.find('table')
@@ -426,50 +264,150 @@ def EIAWeeklyReport(myTimer: func.TimerRequest, outputblob: func.Out[str]) :
             AsOfDate=datetime.strptime(AsOfDate, '%B %d, %Y')
             
         else:
-            print("Next Release information not found.")
+            logger.info("Next Release information not found.")
 
     except Exception as e:
-        logging.error(str(e))
+        logger.error(str(e))
 
-    # Prepare the data
-    Value_Date = date_obj
+    try:
+            
+        Value_Date = date_obj
+        
+        Commodity = 'Gas'
+        location = 'USA'
+        Period = 'Weekly'
+        Source = 'EIA'
+        Senario = 'Base'
+        Unit = 'Bcf'
+        Type = 'Storage'
+
+
+        #%%%%%%%%%%
+        #generic
+
+        # Create a dictionary with the data
+        data = {
+            'ValueDate': [Value_Date],
+            'AsOfDate': [AsOfDate],
+            'Location': [location],
+            'Commodity': [Commodity],
+            'Period': [Period],
+            'Source': [Source],
+            'Senario': [Senario],
+            'Timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+            'Type': [Type],
+            'Value': [Value],
+            'SubType': [np.nan],
+            'SubSubType': [np.nan],
+            'Unit': [Unit],
+            'HubType': [np.nan],
+            'FreeText': [np.nan]
+        }
+
+        # Create a DataFrame from the dictionary
+        new_row = pd.DataFrame(data)
+    except Exception as e:
+        logger.error(str(e))
+
+    try:
+        df = pd.concat([df, new_row], ignore_index=True)
+        updated_csv_content = df.to_csv()
+        outputblob.set(updated_csv_content)
+        logger.info('EIA weekly report processed and saved to blob successfully.')
+        upload_log_to_blob('eia-weeklyreport',log_stream=log_stream)
+    except Exception as e:
+        logger.error(str(e))
+        subject="Error in Code (EIA_weeklyreport)"
+        send_email(subject=subject,body=log_stream.getvalue())
+
+
+
+
+@app.schedule(arg_name="timer3", schedule= "0 0 16 * *",run_on_startup=True,
+              use_monitor=False)
+@app.blob_output(arg_name="outputblob", path="gasconsumption/weather.csv",
+                  connection="AzureWebJobsStorage")
+
+def weather(timer3: func.TimerRequest, outputblob: func.Out[str]):
+    logger, log_stream = create_custom_logger('weather_logger')
+        
+    try:
+            
+        url= requests.get('https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/dubai/2024-08-31/2024-09-15?unitGroup=metric&include=days&key=U629JFB7PKJB9U4JKYDMS7DPF&contentType=json')
+        response= url.json()
+    except Exception as e:
+        logger.error(f'colud not returen the data from the url coz {str(e)}')
     
-    Commodity = 'Gas'
-    location = 'USA'
-    Period = 'Weekly'
-    Source = 'EIA'
-    Senario = 'Base'
-    Unit = 'Bcf'
-    Type = 'Storage'
-
-
     #%%%%%%%%%%
-    #generic
+    try:
+        days = response['days']
+        df= pd.DataFrame(days)
+        df.set_index(df['datetime'], inplace=True)
+        weather = df[ 'temp']
+    except Exception as e:
+        logger.error(f'{str(e)}')
+    
+    try:
+        for i in weather:
+            if isinstance(i, float):      
+                pass
+    except Exception as e:
+        logger.error(f'There is a problem with the data type')
+         
+    try:
+        for i in pd.isnull(weather):
+            if i:
+                logger.error('There is a Null value')
+                # raise ValueError('Null value detected in the data')
+                
+        
+        
+        weather.index= pd.to_datetime(weather.index)
+        
+        Commodity = 'Weather'
+        location = 'UAE'
+        Period = 'Daily'
+        Source = 'visualcrossing'
+        Senario = 'Base'
+        Unit = 'Degree'
+        Type = 'tempreture'
+        
+        
+        #%%%%%%%%%%
+        #generic
+        
+        # Create a dictionary with the data
+        data = {
+            'ValueDate': [weather.index[-1]],
+            'AsOfDate': [weather.index[-1]],
+            'Location': [location],
+            'Commodity': [Commodity],
+            'Period': [Period],
+            'Source': [Source],
+            'Senario': [Senario],
+            'Timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+            'Type': [Type],
+            'Value': [weather[-1]],
+            'SubType': [np.nan],
+            'SubSubType': [np.nan],
+            'Unit': [Unit],
+            'HubType': [np.nan],
+            'FreeText': [np.nan]
+        }
+    except Exception as e:
+        logger.error(str(e))  
+    try:
+        new_row = pd.DataFrame(data)
+        updated_csv_content = new_row.to_csv()
+        outputblob.set(updated_csv_content)
+        logger.info('Weather data processed and saved to blob successfully.')
+    except Exception as e:
+        logger.error(str(e))
+        subject="Error in Code (Weather)"
+        send_email(subject=subject,body=log_stream.getvalue())
+    finally:
+        upload_log_to_blob('weather',log_stream=log_stream)
 
-    # Create a dictionary with the data
-    data = {
-        'ValueDate': [Value_Date],
-        'AsOfDate': [AsOfDate],
-        'Location': [location],
-        'Commodity': [Commodity],
-        'Period': [Period],
-        'Source': [Source],
-        'Senario': [Senario],
-        'Timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-        'Type': [Type],
-        'Value': [Value],
-        'SubType': [np.nan],
-        'SubSubType': [np.nan],
-        'Unit': [Unit],
-        'HubType': [np.nan],
-        'FreeText': [np.nan]
-    }
 
-    # Create a DataFrame from the dictionary
-    new_row = pd.DataFrame(data)
 
-    # Concatenate the new row to the existing DataFrame
-    df = pd.concat([df, new_row], ignore_index=True)
-    updated_csv_content = df.to_csv()
-    outputblob.set(updated_csv_content)
 
